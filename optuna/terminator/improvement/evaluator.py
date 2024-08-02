@@ -12,10 +12,10 @@ from optuna.search_space import intersection_search_space
 from optuna.study import StudyDirection
 from optuna.trial import FrozenTrial
 from optuna.trial import TrialState
+from optuna._gp.acqf import UCB, LCB
 
 
 if TYPE_CHECKING:
-    from optuna._gp import acqf
     from optuna._gp import gp
     from optuna._gp import optim_sample
     from optuna._gp import prior
@@ -25,7 +25,6 @@ else:
 
     gp = _LazyImport("optuna._gp.gp")
     optim_sample = _LazyImport("optuna._gp.optim_sample")
-    acqf = _LazyImport("optuna._gp.acqf")
     prior = _LazyImport("optuna._gp.prior")
     search_space = _LazyImport("optuna._gp.search_space")
 
@@ -124,8 +123,7 @@ class RegretBoundEvaluator(BaseImprovementEvaluator):
 
         # calculate max_ucb
         beta = _get_beta(n_params, n_trials)
-        ucb_acqf_params = acqf.create_acqf_params(
-            acqf_type=acqf.AcquisitionFunctionType.UCB,
+        ucb_acqf = UCB(
             kernel_params=kernel_params,
             search_space=gp_search_space,
             X=normalized_top_n_params,
@@ -134,15 +132,14 @@ class RegretBoundEvaluator(BaseImprovementEvaluator):
         )
         # UCB over the search space. (Original: LCB over the search space. See Change 1 above.)
         standardized_ucb_value = max(
-            acqf.eval_acqf_no_grad(ucb_acqf_params, normalized_top_n_params).max(),
+            ucb_acqf.eval_no_grad(normalized_top_n_params).max(),
             optim_sample.optimize_acqf_sample(
-                ucb_acqf_params, n_samples=self._optimize_n_samples, rng=self._rng.rng
+                ucb_acqf, n_samples=self._optimize_n_samples, rng=self._rng.rng
             )[1],
         )
 
         # calculate min_lcb
-        lcb_acqf_params = acqf.create_acqf_params(
-            acqf_type=acqf.AcquisitionFunctionType.LCB,
+        lcb_acqf = LCB(
             kernel_params=kernel_params,
             search_space=gp_search_space,
             X=normalized_top_n_params,
@@ -151,7 +148,7 @@ class RegretBoundEvaluator(BaseImprovementEvaluator):
         )
         # LCB over the top trials. (Original: UCB over the top trials. See Change 2 above.)
         standardized_lcb_value = np.max(
-            acqf.eval_acqf_no_grad(lcb_acqf_params, normalized_top_n_params)
+            lcb_acqf.eval_no_grad(normalized_top_n_params)
         )
 
         # max(UCB) - max(LCB). (Original: min(UCB) - min(LCB). See Change 3 above.)

@@ -17,12 +17,12 @@ from optuna.samplers._lazy_random_state import LazyRandomState
 from optuna.study import StudyDirection
 from optuna.trial import FrozenTrial
 from optuna.trial import TrialState
-
+from optuna._gp.acqf import LogEI
 
 if TYPE_CHECKING:
     import torch
 
-    import optuna._gp.acqf as acqf
+    from optuna._gp.acqf import BaseAcquisitionFunction
     import optuna._gp.gp as gp
     import optuna._gp.optim_mixed as optim_mixed
     import optuna._gp.prior as prior
@@ -35,8 +35,8 @@ else:
     gp_search_space = _LazyImport("optuna._gp.search_space")
     gp = _LazyImport("optuna._gp.gp")
     optim_mixed = _LazyImport("optuna._gp.optim_mixed")
-    acqf = _LazyImport("optuna._gp.acqf")
     prior = _LazyImport("optuna._gp.prior")
+
 
 
 @experimental_class("3.6.0")
@@ -115,14 +115,14 @@ class GPSampler(BaseSampler):
 
     def _optimize_acqf(
         self,
-        acqf_params: "acqf.AcquisitionFunctionParams",
+        acqf: "BaseAcquisitionFunction",
         best_params: np.ndarray,
     ) -> np.ndarray:
         # Advanced users can override this method to change the optimization algorithm.
         # However, we do not make any effort to keep backward compatibility between versions.
         # Particularly, we may remove this function in future refactoring.
         normalized_params, _acqf_val = optim_mixed.optimize_acqf_mixed(
-            acqf_params,
+            acqf,
             warmstart_normalized_params_array=best_params[None, :],
             n_preliminary_samples=2048,
             n_local_search=10,
@@ -186,8 +186,7 @@ class GPSampler(BaseSampler):
         )
         self._kernel_params_cache = kernel_params
 
-        acqf_params = acqf.create_acqf_params(
-            acqf_type=acqf.AcquisitionFunctionType.LOG_EI,
+        acqf = LogEI(
             kernel_params=kernel_params,
             search_space=internal_search_space,
             X=normalized_params,
@@ -195,7 +194,7 @@ class GPSampler(BaseSampler):
         )
 
         normalized_param = self._optimize_acqf(
-            acqf_params, normalized_params[np.argmax(standarized_score_vals), :]
+            acqf, normalized_params[np.argmax(standarized_score_vals), :]
         )
         return gp_search_space.get_unnormalized_param(search_space, normalized_param)
 
