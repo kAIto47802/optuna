@@ -85,7 +85,7 @@ class LogEI(BaseAcquisitionFunction):
 
     def eval(self, x: torch.Tensor) -> torch.Tensor:
         mean, var = self._get_mean_var(x)
-        return logei(mean=mean, var=var + self.acqf_stabilizing_noise, f0=self.max_Y)
+        return _logei(mean=mean, var=var + self.acqf_stabilizing_noise, f0=self.max_Y)
 
 
 class BaseConfidenceBound(BaseAcquisitionFunction):
@@ -104,16 +104,16 @@ class BaseConfidenceBound(BaseAcquisitionFunction):
 class UCB(BaseConfidenceBound):
     def eval(self, x: torch.Tensor) -> torch.Tensor:
         mean, var = self._get_mean_var(x)
-        return ucb(mean=mean, var=var, beta=self.beta)
+        return _ucb(mean=mean, var=var, beta=self.beta)
 
 
 class LCB(BaseConfidenceBound):
     def eval(self, x: torch.Tensor) -> torch.Tensor:
         mean, var = self._get_mean_var(x)
-        return lcb(mean=mean, var=var, beta=self.beta)
+        return _lcb(mean=mean, var=var, beta=self.beta)
 
 
-def standard_logei(z: torch.Tensor) -> torch.Tensor:
+def _standard_logei(z: torch.Tensor) -> torch.Tensor:
     # Return E_{x ~ N(0, 1)}[max(0, x+z)]
 
     # We switch the implementation depending on the value of z to
@@ -136,17 +136,17 @@ def standard_logei(z: torch.Tensor) -> torch.Tensor:
     return vals
 
 
-def logei(mean: torch.Tensor, var: torch.Tensor, f0: float) -> torch.Tensor:
+def _logei(mean: torch.Tensor, var: torch.Tensor, f0: float) -> torch.Tensor:
     # Return E_{y ~ N(mean, var)}[max(0, y-f0)]
     sigma = torch.sqrt(var)
-    st_val = standard_logei((mean - f0) / sigma)
+    st_val = _standard_logei((mean - f0) / sigma)
     val = torch.log(sigma) + st_val
     return val
 
 
-def ucb(mean: torch.Tensor, var: torch.Tensor, beta: float) -> torch.Tensor:
+def _ucb(mean: torch.Tensor, var: torch.Tensor, beta: float) -> torch.Tensor:
     return mean + torch.sqrt(beta * var)
 
 
-def lcb(mean: torch.Tensor, var: torch.Tensor, beta: float) -> torch.Tensor:
+def _lcb(mean: torch.Tensor, var: torch.Tensor, beta: float) -> torch.Tensor:
     return mean - torch.sqrt(beta * var)
