@@ -177,9 +177,7 @@ def _local_search_discrete(
     if scale_type == ScaleType.CATEGORICAL or len(choices) <= MAX_INT_EXHAUSTIVE_SEARCH_PARAMS:
         return _exhaustive_search(acqf, initial_params, initial_fval, param_idx, choices)
     else:
-        return _discrete_line_search(
-            acqf, initial_params, initial_fval, param_idx, choices, xtol
-        )
+        return _discrete_line_search(acqf, initial_params, initial_fval, param_idx, choices, xtol)
 
 
 def local_search_mixed(
@@ -195,9 +193,7 @@ def local_search_mixed(
 
     continuous_indices = np.where(steps == 0.0)[0]
 
-    inverse_squared_lengthscales = (
-        acqf.kernel_params.inverse_squared_lengthscales.detach().numpy()
-    )
+    inverse_squared_lengthscales = acqf.kernel_params.inverse_squared_lengthscales.detach().numpy()
     # This is a technique for speeding up optimization.
     # We use an isotropic kernel, so scaling the gradient will make
     # the hessian better-conditioned.

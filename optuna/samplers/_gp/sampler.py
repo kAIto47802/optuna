@@ -11,13 +11,14 @@ import numpy as np
 
 import optuna
 from optuna._experimental import experimental_class
+from optuna._gp.acqf import LogEI
 from optuna.distributions import BaseDistribution
 from optuna.samplers._base import BaseSampler
 from optuna.samplers._lazy_random_state import LazyRandomState
 from optuna.study import StudyDirection
 from optuna.trial import FrozenTrial
 from optuna.trial import TrialState
-from optuna._gp.acqf import LogEI
+
 
 if TYPE_CHECKING:
     import torch
@@ -36,7 +37,6 @@ else:
     gp = _LazyImport("optuna._gp.gp")
     optim_mixed = _LazyImport("optuna._gp.optim_mixed")
     prior = _LazyImport("optuna._gp.prior")
-
 
 
 @experimental_class("3.6.0")

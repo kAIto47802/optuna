@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from enum import IntEnum
+import abc
 import math
 from typing import TYPE_CHECKING
 
 import numpy as np
-
-import abc
 
 from optuna._gp.gp import kernel
 from optuna._gp.gp import KernelParamsTensor
@@ -24,9 +21,9 @@ else:
     torch = _LazyImport("torch")
 
 
-
 class BaseAcquisitionFunction(abc.ABC):
-    def __init__(self,
+    def __init__(
+        self,
         kernel_params: KernelParamsTensor,
         search_space: SearchSpace,
         X: np.ndarray,
@@ -53,7 +50,7 @@ class BaseAcquisitionFunction(abc.ABC):
     def eval_no_grad(self, x: np.ndarray) -> np.ndarray:
         with torch.no_grad():
             return self.eval(torch.from_numpy(x)).detach().numpy()
-        
+
     def eval_with_grad(self, x: np.ndarray) -> tuple[float, np.ndarray]:
         assert x.ndim == 1
         x_tensor = torch.from_numpy(x)
@@ -80,12 +77,11 @@ class LogEI(BaseAcquisitionFunction):
         search_space: SearchSpace,
         X: np.ndarray,
         Y: np.ndarray,
-        acqf_stabilizing_noise: float = 1e-12
+        acqf_stabilizing_noise: float = 1e-12,
     ):
         super().__init__(kernel_params, search_space, X, Y)
         self.max_Y = np.max(Y)
         self.acqf_stabilizing_noise = acqf_stabilizing_noise
-                 
 
     def eval(self, x: torch.Tensor) -> torch.Tensor:
         mean, var = self._get_mean_var(x)
@@ -99,15 +95,17 @@ class BaseConfidenceBound(BaseAcquisitionFunction):
         search_space: SearchSpace,
         X: np.ndarray,
         Y: np.ndarray,
-        beta: float
+        beta: float,
     ):
         super().__init__(kernel_params, search_space, X, Y)
         self.beta = beta
+
 
 class UCB(BaseConfidenceBound):
     def eval(self, x: torch.Tensor) -> torch.Tensor:
         mean, var = self._get_mean_var(x)
         return ucb(mean=mean, var=var, beta=self.beta)
+
 
 class LCB(BaseConfidenceBound):
     def eval(self, x: torch.Tensor) -> torch.Tensor:

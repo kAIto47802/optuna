@@ -6,13 +6,14 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from optuna._experimental import experimental_class
+from optuna._gp.acqf import LCB
+from optuna._gp.acqf import UCB
 from optuna.distributions import BaseDistribution
 from optuna.samplers._lazy_random_state import LazyRandomState
 from optuna.search_space import intersection_search_space
 from optuna.study import StudyDirection
 from optuna.trial import FrozenTrial
 from optuna.trial import TrialState
-from optuna._gp.acqf import UCB, LCB
 
 
 if TYPE_CHECKING:
@@ -147,9 +148,7 @@ class RegretBoundEvaluator(BaseImprovementEvaluator):
             beta=beta,
         )
         # LCB over the top trials. (Original: UCB over the top trials. See Change 2 above.)
-        standardized_lcb_value = np.max(
-            lcb_acqf.eval_no_grad(normalized_top_n_params)
-        )
+        standardized_lcb_value = np.max(lcb_acqf.eval_no_grad(normalized_top_n_params))
 
         # max(UCB) - max(LCB). (Original: min(UCB) - min(LCB). See Change 3 above.)
         return standardized_ucb_value - standardized_lcb_value  # standardized regret bound
