@@ -5,9 +5,9 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from optuna._gp.acqf import AcquisitionFunctionParams, eval_acqf_with_constraints_grad, eval_acqf_with_constraints_no_grad
-from optuna._gp.acqf import eval_acqf_no_grad
-from optuna._gp.acqf import eval_acqf_with_grad
+from optuna._gp.acqf import AcquisitionFunctionParams
+from optuna._gp.acqf import eval_acqf_with_constraints_grad
+from optuna._gp.acqf import eval_acqf_with_constraints_no_grad
 from optuna._gp.search_space import normalize_one_param
 from optuna._gp.search_space import sample_normalized_params
 from optuna._gp.search_space import ScaleType
@@ -55,7 +55,9 @@ def _gradient_ascent(
     def negative_acqf_with_grad(scaled_x: np.ndarray) -> tuple[float, np.ndarray]:
         # Scale back to the original domain, i.e. [0, 1], from [0, 1/s].
         normalized_params[continuous_indices] = scaled_x * lengthscales
-        (fval, grad) = eval_acqf_with_constraints_grad(acqf_params, constraints_acqf_params, normalized_params)
+        (fval, grad) = eval_acqf_with_constraints_grad(
+            acqf_params, constraints_acqf_params, normalized_params
+        )
         # Flip sign because scipy minimizes functions.
         # Let the scaled acqf be g(x) and the acqf be f(sx), then dg/dx = df/dx * s.
         return (-fval, -grad[continuous_indices] * lengthscales)
@@ -129,7 +131,11 @@ def _discrete_line_search(
         normalized_params[param_idx] = grids[i]
 
         # Flip sign because scipy minimizes functions.
-        negval = -float(eval_acqf_with_constraints_no_grad(acqf_params, constraints_acqf_params, normalized_params))
+        negval = -float(
+            eval_acqf_with_constraints_no_grad(
+                acqf_params, constraints_acqf_params, normalized_params
+            )
+        )
         negative_fval_cache[i] = negval
         return negval
 
@@ -181,10 +187,18 @@ def _local_search_discrete(
 
     scale_type = acqf_params.search_space.scale_types[param_idx]
     if scale_type == ScaleType.CATEGORICAL or len(choices) <= MAX_INT_EXHAUSTIVE_SEARCH_PARAMS:
-        return _exhaustive_search(acqf_params, constraints_acqf_params, initial_params, initial_fval, param_idx, choices)
+        return _exhaustive_search(
+            acqf_params, constraints_acqf_params, initial_params, initial_fval, param_idx, choices
+        )
     else:
         return _discrete_line_search(
-            acqf_params, constraints_acqf_params, initial_params, initial_fval, param_idx, choices, xtol
+            acqf_params,
+            constraints_acqf_params,
+            initial_params,
+            initial_fval,
+            param_idx,
+            choices,
+            xtol,
         )
 
 
@@ -233,7 +247,11 @@ def local_search_mixed(
     ]
 
     best_normalized_params = initial_normalized_params.copy()
-    best_fval = float(eval_acqf_with_constraints_no_grad(acqf_params, constraints_acqf_params, best_normalized_params))
+    best_fval = float(
+        eval_acqf_with_constraints_no_grad(
+            acqf_params, constraints_acqf_params, best_normalized_params
+        )
+    )
 
     CONTINUOUS = -1
     last_changed_param: int | None = None
@@ -259,7 +277,13 @@ def local_search_mixed(
                 # Parameters not changed since last time.
                 return (best_normalized_params, best_fval)
             (best_normalized_params, best_fval, updated) = _local_search_discrete(
-                acqf_params, constraints_acqf_params, best_normalized_params, best_fval, i, choices, xtol
+                acqf_params,
+                constraints_acqf_params,
+                best_normalized_params,
+                best_fval,
+                i,
+                choices,
+                xtol,
             )
             if updated:
                 last_changed_param = i

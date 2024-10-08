@@ -154,15 +154,19 @@ def _eval_acqf_with_constraints(
         acqf_params, x
     )
 
+
 def eval_acqf_with_constraints_no_grad(
     acqf_params: AcquisitionFunctionParams,
     constraints_acqf_params: list[AcquisitionFunctionParams],
     x: np.ndarray,
 ) -> np.ndarray:
     with torch.no_grad():
-        return _eval_acqf_with_constraints(
-            acqf_params, constraints_acqf_params, torch.from_numpy(x)
-        ).detach().numpy()
+        return (
+            _eval_acqf_with_constraints(acqf_params, constraints_acqf_params, torch.from_numpy(x))
+            .detach()
+            .numpy()
+        )
+
 
 def eval_acqf_with_constraints_grad(
     acqf_params: AcquisitionFunctionParams,
@@ -175,6 +179,7 @@ def eval_acqf_with_constraints_grad(
     val = _eval_acqf_with_constraints(acqf_params, constraints_acqf_params, x_tensor)
     val.backward()  # type: ignore
     return val.item(), x_tensor.grad.detach().numpy()  # type: ignore
+
 
 def eval_acqf_no_grad(
     acqf_params: AcquisitionFunctionParams,
