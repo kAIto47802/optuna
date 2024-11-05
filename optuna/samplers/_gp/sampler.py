@@ -11,6 +11,7 @@ import numpy as np
 import optuna
 from optuna._experimental import experimental_class
 from optuna._experimental import warn_experimental_argument
+from optuna._gp.acqf import eval_acqf_no_grad
 from optuna.distributions import BaseDistribution
 from optuna.samplers._base import _CONSTRAINTS_KEY
 from optuna.samplers._base import _process_constraints_after_trial
@@ -19,6 +20,12 @@ from optuna.samplers._lazy_random_state import LazyRandomState
 from optuna.study import StudyDirection
 from optuna.trial import FrozenTrial
 from optuna.trial import TrialState
+
+# import matplotlib.pyplot as plt
+
+import plotly.graph_objects as go
+import io 
+import PIL
 
 
 if TYPE_CHECKING:
@@ -105,6 +112,9 @@ class GPSampler(BaseSampler):
 
         if constraints_func is not None:
             warn_experimental_argument("constraints_func")
+
+        self.fig = None
+        self.frames = []
 
     def reseed_rng(self) -> None:
         self._rng.rng.seed()
@@ -258,6 +268,71 @@ class GPSampler(BaseSampler):
         acqf_params_with_constraints = acqf.ConstrainedAcquisitionFunctionParams.from_acqf_params(
             acqf_params, constraints_acqf_params
         )
+
+        n_grids = 20
+        x_grid, y_grid = np.meshgrid(np.linspace(0, 1, n_grids), np.linspace(0, 1, n_grids))
+        dx = np.vstack([x_grid.flatten(), y_grid.flatten()]).T
+        z = eval_acqf_no_grad(acqf_params_with_constraints, dx)
+        z = np.maximum(z, -50).reshape(n_grids, n_grids)
+
+
+        self.frames.append(go.Frame(
+            data=[
+                go.Scatter(
+                    x=normalized_params[:, 0],
+                    y=normalized_params[:, 1],
+                    mode="markers",
+                    name=f"Trial {len(trials)}",
+                ),
+                go.Contour(
+                    z=z,
+                    x=x_grid[0, :],
+                    y=y_grid[:, 0],
+                ),
+            ],
+            name=f"Trial {len(trials)}"
+        ))
+
+        if len(trials) == 99:
+            self.fig = go.Figure(
+                data=self.frames[0]["data"],
+                frames=self.frames,
+            )
+            sliders = [dict(
+                active=0,
+                currentvalue={"prefix": "Trial: "},
+                pad={"t": 50},
+                steps=[
+                    dict(method="animate", args=[[f"Trial {i}"], dict(mode="immediate", frame=dict(duration=500, redraw=True), transition=dict(duration=0))], label=f"Trial {i}")
+                    for i in range(self._n_startup_trials + 1,len(trials) + 1)
+                ]
+            )]
+            self.fig.update_layout(
+                # title="Landscape",
+                sliders=sliders,
+                xaxis=dict(title="X Axis", range=[0, 1]),
+                yaxis=dict(title="Y Axis", range=[0, 1]),
+            )
+            # self.fig.show()
+            # self.fig.write_html("landscape.html")
+            img = []
+            print(len(self.frames))
+            for k in range(100 - self._n_startup_trials):
+                fig = go.Figure(
+                    data=self.frames[k]["data"],
+                    layout=self.fig.layout
+                )
+                fig.layout.sliders[0].update(active=k)
+                img.append(PIL.Image.open(io.BytesIO(fig.to_image(format='png',scale=1))))
+            img[0].save(
+                'output.gif',
+                save_all=True,
+                append_images=img[1:],
+                optimize=True,
+                duration=500,
+                loop=0,
+                dither=None
+            )
 
         normalized_param = self._optimize_acqf(
             acqf_params_with_constraints,

@@ -180,8 +180,13 @@ def eval_acqf(acqf_params: AcquisitionFunctionParams, x: torch.Tensor) -> torch.
 
     if isinstance(acqf_params, ConstrainedAcquisitionFunctionParams):
         c_val = sum(eval_acqf(params, x) for params in acqf_params.acqf_params_for_constraints)
+        # print('A'*50)
+        # print(f_val)
+        # print(c_val)
         return f_val + c_val
     else:
+        # print('B'*50)
+        # print(f_val)
         return f_val
 
 
