@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Sequence, Generator
 from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures import ThreadPoolExecutor
 import math
@@ -15,6 +15,8 @@ import optuna
 from optuna.distributions import CategoricalDistribution
 from optuna.distributions import FloatDistribution
 from optuna.storages import BaseStorage
+from optuna.testing.storages import STORAGE_MODES
+from optuna.testing.storages import StorageSupplier
 from optuna.storages.journal import JournalRedisBackend
 from optuna.study import StudyDirection
 from optuna.trial import TrialState
@@ -237,8 +239,17 @@ def test_get_best_trial(direction: StudyDirection, values: Sequence[float]) -> N
     assert study.best_value == expected_value
 
 
-def test_set_and_get_study_user_attrs_for_floats() -> None:
-    storage = get_storage()
+@pytest.fixture(params=STORAGE_MODES + [None])
+def storage_mode(request: pytest.FixtureRequest) -> Generator[BaseStorage, None, None]:
+    if request.param is None:
+        yield get_storage()
+    else:
+        with StorageSupplier(request.param) as storage:
+            yield storage
+
+
+def test_set_and_get_study_user_attrs_for_floats(storage: BaseStorage) -> None:
+    # storage = get_storage()
     study_id = storage.create_new_study(directions=[StudyDirection.MINIMIZE])
 
     # Test setting value.
@@ -247,8 +258,8 @@ def test_set_and_get_study_user_attrs_for_floats() -> None:
         assert is_equal_floats(storage.get_study_user_attrs(study_id)[key], value)
 
 
-def test_set_and_get_study_system_attrs_for_floats() -> None:
-    storage = get_storage()
+def test_set_and_get_study_system_attrs_for_floats(storage: BaseStorage) -> None:
+    # storage = get_storage()
     study_id = storage.create_new_study(directions=[StudyDirection.MINIMIZE])
 
     # Test setting value.
@@ -257,8 +268,8 @@ def test_set_and_get_study_system_attrs_for_floats() -> None:
         assert is_equal_floats(storage.get_study_system_attrs(study_id)[key], value)
 
 
-def test_set_trial_state_values_for_floats() -> None:
-    storage = get_storage()
+def test_set_trial_state_values_for_floats(storage_mode: BaseStorage) -> None:
+    # storage = get_storage()
     study_id = storage.create_new_study(directions=[StudyDirection.MINIMIZE])
     for value in FLOAT_ATTRS.values():
         if math.isnan(value):  # NOTE: Optuna does not accept `nan` as `value`.
@@ -270,8 +281,8 @@ def test_set_trial_state_values_for_floats() -> None:
         assert is_equal_floats(set_value, value)
 
 
-def test_set_and_get_trial_param_for_floats() -> None:
-    storage = get_storage()
+def test_set_and_get_trial_param_for_floats(storage: BaseStorage) -> None:
+    # storage = get_storage()
     study_id = storage.create_new_study(directions=[StudyDirection.MINIMIZE])
     trial_id = storage.create_new_trial(study_id)
 
@@ -289,8 +300,8 @@ def test_set_and_get_trial_param_for_floats() -> None:
             assert storage.get_trial(trial_id).distributions[param_name] == distribution
 
 
-def test_set_trial_intermediate_value_for_floats() -> None:
-    storage = get_storage()
+def test_set_trial_intermediate_value_for_floats(storage: BaseStorage) -> None:
+    # storage = get_storage()
     study_id = storage.create_new_study(directions=[StudyDirection.MINIMIZE])
     trial_id = storage.create_new_trial(study_id)
     for i, value in enumerate(FLOAT_ATTRS.values()):
@@ -298,8 +309,8 @@ def test_set_trial_intermediate_value_for_floats() -> None:
         assert is_equal_floats(storage.get_trial(trial_id).intermediate_values[i], value)
 
 
-def test_set_and_get_trial_user_attr_for_floats() -> None:
-    storage = get_storage()
+def test_set_and_get_trial_user_attr_for_floats(storage: BaseStorage) -> None:
+    # storage = get_storage()
     trial_id = storage.create_new_trial(
         storage.create_new_study(directions=[StudyDirection.MINIMIZE])
     )
@@ -310,8 +321,8 @@ def test_set_and_get_trial_user_attr_for_floats() -> None:
         assert is_equal_floats(storage.get_trial_user_attrs(trial_id)[key], value)
 
 
-def test_set_and_get_trial_system_attr_for_floats() -> None:
-    storage = get_storage()
+def test_set_and_get_trial_system_attr_for_floats(storage: BaseStorage) -> None:
+    # storage = get_storage()
     trial_id = storage.create_new_trial(
         storage.create_new_study(directions=[StudyDirection.MINIMIZE])
     )
