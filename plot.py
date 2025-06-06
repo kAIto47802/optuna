@@ -60,46 +60,39 @@ def plot_results(
 
 
 def main(args: Namespace) -> None:
-    versions = ["v1.14.0", "v1.15.0"]
-    colors = {
-        "v1.14.0": "#0072B2",
-        "v1.15.0": "#CC79A7",
-    }
-    markers = {
-        "v1.14.0": "o",
-        "v1.15.0": "s",
-    }
+    colors = dict(zip(args.versions, ["#0072B2", "#CC79A7", "#F0E442"][: len(args.versions)]))
+    markers = dict(zip(args.versions, ["o", "s", "D"][: len(args.versions)]))
 
     data = [
         np.load(
             f"results/bbob_fn{args.function_id}_dim{args.dimension}_scipy{v.replace('v', '')}_trial{args.n_trials}.npz",
         )
-        for v in versions
+        for v in args.versions
     ]
 
     times, values = zip(*[_prepare_data(d) for d in data])
 
     fig = plot_results(
-        dict(zip(versions, times)),
+        dict(zip(args.versions, times)),
         colors=colors,
         markers=markers,
         ylabel="Elapsed Time / s",
         accumulate=False,
     )
     fig.savefig(
-        f"results/times_bbob_fn{args.function_id}_dim{args.dimension}.png",
+        f"results/times_bbob_fn{args.function_id}_dim{args.dimension}_{'-'.join(args.versions)}.png",
         bbox_inches="tight",
     )
 
     fig = plot_results(
-        dict(zip(versions, values)),
+        dict(zip(args.versions, values)),
         colors=colors,
         markers=markers,
         ylabel="Function Value",
         accumulate=True,
     )
     fig.savefig(
-        f"results/values_bbob_fn{args.function_id}_dim{args.dimension}.png",
+        f"results/values_bbob_fn{args.function_id}_dim{args.dimension}_{'-'.join(args.versions)}.png",
         bbox_inches="tight",
     )
 
@@ -123,6 +116,13 @@ if __name__ == "__main__":
         type=int,
         default=100,
         help="Number of trials for the optimization.",
+    )
+    parser.add_argument(
+        "--versions",
+        type=str,
+        nargs="+",
+        default=["v1.14.0", "v1.15.0"],
+        help="List of scipy versions to compare.",
     )
     args = parser.parse_args()
     main(args)
