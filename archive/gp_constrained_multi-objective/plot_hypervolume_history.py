@@ -23,8 +23,12 @@ def plot_results(
     legend_order: list[str],
     ylabel: str,
     use_sf: bool = True,
+    trial_min: int | None = None,
+    xlim: tuple[float, float] | None = None,
+    ylim: tuple[float, float] | None = None,
+    figsize: tuple[float, float] | None = None,
 ) -> Figure:
-    fig, ax = plt.subplots()
+    fig, ax = plt.subplots(figsize=figsize)
     lines = {}
     names_list = {}
     for name, d in data.items():
@@ -33,8 +37,8 @@ def plot_results(
         std = np.std(values, axis=0) / np.sqrt(values.shape[0])
         dx = d[0].trial_numbers
         (line,) = ax.plot(
-            dx,
-            mean,
+            dx[trial_min:],
+            mean[trial_min:],
             colors[name],
             label=names[name],
             marker=markers[name],
@@ -44,9 +48,9 @@ def plot_results(
         lines[name] = line
         names_list[name] = names[name]
         ax.fill_between(
-            dx,
-            mean - std,
-            mean + std,
+            dx[trial_min:],
+            (mean - std)[trial_min:],
+            (mean + std)[trial_min:],
             alpha=0.2,
             color=colors[name],
         )
@@ -69,6 +73,11 @@ def plot_results(
         for lbl in ax.get_xticklabels() + ax.get_yticklabels():
             lbl.set_fontproperties(fp)
     ax.tick_params(labelsize=12)
+
+    if xlim is not None:
+        ax.set_xlim(*xlim)
+    if ylim is not None:
+        ax.set_ylim(*ylim)
 
     return fig
 
@@ -120,6 +129,10 @@ def main(args: Namespace) -> None:
         legend_order=legend_order,
         ylabel="Hypervolume",
         use_sf=args.use_sf,
+        xlim=(6, args.n_trials + 4),
+        ylim=(2.56, 3.23),
+        trial_min=10,
+        figsize=(7.5, 4),
     )
     fig.savefig(
         f"results/{name}_hypervolume_history{'_sf' if args.use_sf else ''}.png",
@@ -175,7 +188,8 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--use_sf",
-        action="store_true",
+        type=bool,
+        default=True,
         help="Use sans-serif font for the plot.",
     )
     args = parser.parse_args()

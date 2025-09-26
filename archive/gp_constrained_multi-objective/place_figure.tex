@@ -1,0 +1,40 @@
+\documentclass{article}
+
+\usepackage{graphicx}
+\usepackage{subcaption}
+\usepackage{geometry}
+\geometry{paperwidth=180mm, paperheight=150mm, left=3mm, right=0mm, top=0mm, bottom=0mm}
+
+\begin{document}
+
+\begin{figure}[h]
+    \centering
+    \begin{minipage}[b]{0.49\linewidth}
+        \centering
+        \hspace{-5mm}\includegraphics[width=\linewidth]{results/cdtlz_C2-DTLZ2_n_objectives2_dim3_trial300_gp_seed42_pareto_front_sf.pdf}
+        \vspace{-2mm}
+        \subcaption{GPSampler w/ constraints}
+    \end{minipage}
+    \begin{minipage}[b]{0.49\linewidth}
+        \centering
+        \hspace{-5mm}\includegraphics[width=\linewidth]{results/cdtlz_C2-DTLZ2_n_objectives2_dim3_trial300_gp_wo_constraints_seed42_pareto_front_sf.pdf}
+        \vspace{-2mm}
+        \subcaption{GPSampler w/o constraints}
+    \end{minipage}
+
+    \vspace{3mm}
+    \begin{minipage}[b]{0.49\linewidth}
+        \centering
+        \hspace{-5mm}\includegraphics[width=\linewidth]{results/cdtlz_C2-DTLZ2_n_objectives2_dim3_trial300_tpe_seed42_pareto_front_sf.pdf}
+        \vspace{-2mm}
+        \subcaption{TPESampler w/ constraints}
+    \end{minipage}
+    \begin{minipage}[b]{0.49\linewidth}
+        \centering
+        \hspace{-5mm}\includegraphics[width=\linewidth]{results/cdtlz_C2-DTLZ2_n_objectives2_dim3_trial300_nsgaii_seed42_pareto_front_sf.pdf}
+        \vspace{-2mm}
+        \subcaption{NSGAIISampler w/ constraints}
+    \end{minipage}
+\end{figure}
+
+\end{document}

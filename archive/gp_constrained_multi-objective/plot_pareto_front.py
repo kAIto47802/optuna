@@ -13,9 +13,12 @@ from optuna.visualization.matplotlib import plot_pareto_front
 fp = font_manager.FontProperties(fname="/usr/share/fonts/TTF/Times.TTF")
 
 
-def _get_pareto_front_2d_patched(info: _ParetoFrontInfo, use_sf: bool = True) -> Figure:
-    # Set up the graph style.
-    # plt.style.use("ggplot")  # Use ggplot style sheet for similar outputs to plotly.
+def _get_pareto_front_2d_patched(
+    info: _ParetoFrontInfo,
+    xlim: tuple[float | None, float | None] | None = None,
+    ylim: tuple[float | None, float | None] | None = None,
+    use_sf: bool = True,
+) -> Figure:
     fig, ax = plt.subplots()
 
     ax.set_xlabel(
@@ -29,24 +32,27 @@ def _get_pareto_front_2d_patched(info: _ParetoFrontInfo, use_sf: bool = True) ->
         ax.scatter(
             x=[values[info.axis_order[0]] for _, values in info.infeasible_trials_with_values],
             y=[values[info.axis_order[1]] for _, values in info.infeasible_trials_with_values],
-            color="#cccccc",
-            alpha=0.6,
+            color="#2B2B2B",
+            facecolors="#6E6E6E",
+            alpha=0.7,
             label="Infeasible Trial",
         )
     if len(info.non_best_trials_with_values) > 0:
         ax.scatter(
             x=[values[info.axis_order[0]] for _, values in info.non_best_trials_with_values],
             y=[values[info.axis_order[1]] for _, values in info.non_best_trials_with_values],
-            color="#0072B2",
-            alpha=0.6,
+            color="#963269",
+            facecolors="#CC79A7",
+            alpha=0.7,
             label="Feasible Trial",
         )
     if len(info.best_trials_with_values) > 0:
         ax.scatter(
             x=[values[info.axis_order[0]] for _, values in info.best_trials_with_values],
             y=[values[info.axis_order[1]] for _, values in info.best_trials_with_values],
-            color="#CC79A7",
-            alpha=0.6,
+            color="#1348AC",
+            facecolors="#0072B2",
+            alpha=0.7,
             label="Best Trial",
         )
 
@@ -67,12 +73,19 @@ def _get_pareto_front_2d_patched(info: _ParetoFrontInfo, use_sf: bool = True) ->
             lbl.set_fontproperties(fp)
     ax.tick_params(labelsize=12)
 
+    if xlim is not None:
+        ax.set_xlim(*xlim)
+    if ylim is not None:
+        ax.set_ylim(*ylim)
+
     return fig
 
 
 def main(args: Namespace) -> None:
     optuna.visualization.matplotlib._pareto_front._get_pareto_front_2d = (
-        lambda info: _get_pareto_front_2d_patched(info, use_sf=args.use_sf)
+        lambda info: _get_pareto_front_2d_patched(
+            info, xlim=(None, 1.56), ylim=(None, 1.56), use_sf=args.use_sf
+        )
     )
 
     cdtlz = optunahub.load_local_module(
@@ -91,9 +104,8 @@ def main(args: Namespace) -> None:
         storage="sqlite:///results/results.db",
     )
     fig = plot_pareto_front(study, constraints_func=problem.constraints_func)
-    # fig.savefig(f"results/{name}_pareto_front.png", bbox_inches="tight")
     fig.savefig(
-        f"results/{name}_pareto_front{'_sf' if args.use_sf else ''}.png",
+        f"results/{name}_pareto_front{'_sf' if args.use_sf else ''}.{args.file_format}",
         bbox_inches="tight",
         dpi=300,
     )
@@ -148,6 +160,13 @@ if __name__ == "__main__":
         type=bool,
         default=True,
         help="Use sans-serif font for the plot.",
+    )
+    parser.add_argument(
+        "--file_format",
+        type=str,
+        default="pdf",
+        choices=["png", "pdf"],
+        help="File format for the output plot (e.g., png, pdf).",
     )
     args = parser.parse_args()
 
