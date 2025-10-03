@@ -37,6 +37,10 @@ UNUPDATABLE_MSG = "Trial#{trial_number} has already finished and can not be upda
 SNAPSHOT_INTERVAL = 100
 
 
+import psutil, os
+
+process = psutil.Process(os.getpid())
+
 class JournalOperation(enum.IntEnum):
     CREATE_STUDY = 0
     DELETE_STUDY = 1
@@ -146,7 +150,9 @@ class JournalStorage(BaseStorage):
 
     def _sync_with_backend(self) -> None:
         logs = self._backend.read_logs(self._replay_result.log_number_read)
+        print(f"Mem: {process.memory_info().rss / 1024**2:.2f} MB")
         self._replay_result.apply_logs(logs)
+        print(f"Mem: {process.memory_info().rss / 1024**2:.2f} MB")
 
     def create_new_study(
         self, directions: Sequence[StudyDirection], study_name: str | None = None
