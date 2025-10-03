@@ -150,9 +150,9 @@ class JournalStorage(BaseStorage):
 
     def _sync_with_backend(self) -> None:
         logs = self._backend.read_logs(self._replay_result.log_number_read)
-        print(f"Mem: {process.memory_info().rss / 1024**2:.2f} MB")
+        print(f"{process.memory_info().rss / 1024**2:.2f}", end=",")
         self._replay_result.apply_logs(logs)
-        print(f"Mem: {process.memory_info().rss / 1024**2:.2f} MB")
+        print(f"{process.memory_info().rss / 1024**2:.2f}")
 
     def create_new_study(
         self, directions: Sequence[StudyDirection], study_name: str | None = None
