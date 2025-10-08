@@ -6,10 +6,13 @@ from collections.abc import Iterator
 import copy
 import datetime
 import enum
+import os
 import pickle
 import threading
 from typing import Any
 import uuid
+
+import psutil
 
 import optuna
 from optuna._typing import JSONSerializable
@@ -37,9 +40,8 @@ UNUPDATABLE_MSG = "Trial#{trial_number} has already finished and can not be upda
 SNAPSHOT_INTERVAL = 100
 
 
-import psutil, os
+_process = psutil.Process(os.getpid())
 
-process = psutil.Process(os.getpid())
 
 class JournalOperation(enum.IntEnum):
     CREATE_STUDY = 0
@@ -150,9 +152,9 @@ class JournalStorage(BaseStorage):
 
     def _sync_with_backend(self) -> None:
         logs = self._backend.read_logs(self._replay_result.log_number_read)
-        print(f"{process.memory_info().rss / 1024**2:.2f}", end=",")
+        print(f"{_process.memory_info().rss / 1024**2:.2f}", end=",")
         self._replay_result.apply_logs(logs)
-        print(f"{process.memory_info().rss / 1024**2:.2f}")
+        print(f"{_process.memory_info().rss / 1024**2:.2f}")
 
     def create_new_study(
         self, directions: Sequence[StudyDirection], study_name: str | None = None
