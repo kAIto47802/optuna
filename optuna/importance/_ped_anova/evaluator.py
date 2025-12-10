@@ -268,3 +268,15 @@ class PedAnovaImportanceEvaluator(BaseImportanceEvaluator):
 
         param_importances.update({k: 0.0 for k in single_dists})
         return _sort_dict_by_importance(param_importances)
+def _get_filtered_trials(
+    study: Study, target: Callable[[FrozenTrial], float] | None
+) -> list[FrozenTrial]:
+    trials = study.get_trials(deepcopy=False, states=(TrialState.COMPLETE,))
+    return [
+        trial
+        for trial in trials
+        if np.isfinite(
+            target(trial) if target is not None else cast("float", trial.value)
+        )  # TC006
+    ]
+
