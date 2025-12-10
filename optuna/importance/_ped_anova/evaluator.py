@@ -268,6 +268,29 @@ class PedAnovaImportanceEvaluator(BaseImportanceEvaluator):
 
         param_importances.update({k: 0.0 for k in single_dists})
         return _sort_dict_by_importance(param_importances)
+
+
+def _partition_by_regime(param_name: str, trials: list[FrozenTrial]) -> dict[BaseDistribution | None, list[FrozenTrial]]:
+    # None for the inactive regime
+    regime_trials: dict[BaseDistribution | None, list[FrozenTrial]] = defaultdict(list)
+    active_dist: BaseDistribution | None = None
+    for trial in trials:
+        if param_name not in trial.params: # inactive trial
+            regime_trials[None].append(trial)
+        else:
+            if active_dist is None:
+                active_dist = trial.distributions[param_name]
+            elif active_dist != trial.distributions[param_name]:
+                raise NotImplementedError(
+                    "conditional PED-ANOVA currently does not support changing distributions of a parameter "
+                    f"`{param_name}` across trials."
+                )
+
+            regime_trials[active_dist].append(trial)
+
+    return regime_trials
+
+
 def _get_filtered_trials(
     study: Study, target: Callable[[FrozenTrial], float] | None
 ) -> list[FrozenTrial]:
