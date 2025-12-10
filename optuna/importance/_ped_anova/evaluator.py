@@ -236,13 +236,6 @@ class PedAnovaImportanceEvaluator(BaseImportanceEvaluator):
             params = list({k for d in dists for k in d})
 
         assert params is not None
-        # PED-ANOVA does not support parameter distributions with a single value,
-        # because the importance of such params become zero.
-        # non_single_dists = {name: dist for name, dist in dists.items() if not dist.single()}
-        # single_dists = {name: dist for name, dist in dists.items() if dist.single()}
-        # if len(non_single_dists) == 0:
-        #     return {}
-
 
         trials = _get_filtered_trials(study, target=target)
         # The following should be tested at _get_filtered_trials.
