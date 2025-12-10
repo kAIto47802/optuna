@@ -265,15 +265,15 @@ class PedAnovaImportanceEvaluator(BaseImportanceEvaluator):
             for dist, region_trials_regime in regime_trials.items():
                 all_region_trials_regime = set(region_trials_regime)
                 target_trials_regime = [t for t in target_trials if t in all_region_trials_regime]
-                target_regime_prob = len(target_trials_regime) / len(target_trials) # a_i
-                region_regime_prob = len(region_trials_regime) / len(region_trials) # b_i
+                regime_prob_target = len(target_trials_regime) / len(target_trials) # a_i
+                regime_prob_region = len(region_trials_regime) / len(region_trials) # b_i
                 if dist is not None and not dist.single():
                     # between-regime divergence
-                    param_importances[param_name] += target_regime_prob ** 2 / region_regime_prob * self._compute_pearson_divergence(
+                    param_importances[param_name] += regime_prob_target ** 2 / regime_prob_region * self._compute_pearson_divergence(
                         param_name, dist, top_trials=target_trials_regime, all_trials=all_region_trials_regime
                     )
                 # inter-regime divergence
-                param_importances[param_name] += (target_regime_prob - region_regime_prob) ** 2 / region_regime_prob
+                param_importances[param_name] += (regime_prob_target - regime_prob_region) ** 2 / regime_prob_region
         param_importances = {k: v * quantile ** 2 for k, v in param_importances.items()}
         return _sort_dict_by_importance(param_importances)
 
