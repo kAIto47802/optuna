@@ -232,24 +232,25 @@ class PedAnovaImportanceEvaluator(BaseImportanceEvaluator):
     ) -> dict[str, float]:
         dists = _get_distributions(study, params=params)
         if params is None:
-            params = list(dists.keys())
+            params = list({k for d in dists for k in d})
 
         assert params is not None
         # PED-ANOVA does not support parameter distributions with a single value,
         # because the importance of such params become zero.
-        non_single_dists = {name: dist for name, dist in dists.items() if not dist.single()}
-        single_dists = {name: dist for name, dist in dists.items() if dist.single()}
-        if len(non_single_dists) == 0:
-            return {}
+        # non_single_dists = {name: dist for name, dist in dists.items() if not dist.single()}
+        # single_dists = {name: dist for name, dist in dists.items() if dist.single()}
+        # if len(non_single_dists) == 0:
+        #     return {}
 
-        trials = _get_filtered_trials(study, params=params, target=target)
-        n_params = len(non_single_dists)
+
+        trials = _get_filtered_trials(study, target=target)
+        # n_params = len(non_single_dists)
         # The following should be tested at _get_filtered_trials.
-        assert target is not None or max([len(t.values) for t in trials], default=1) == 1
-        if len(trials) <= self._min_n_top_trials:
-            param_importances = {k: 1.0 / n_params for k in non_single_dists}
-            param_importances.update({k: 0.0 for k in single_dists})
-            return {k: 0.0 for k in param_importances}
+        # assert target is not None or max([len(t.values) for t in trials], default=1) == 1
+        # if len(trials) <= self._min_n_top_trials:
+        #     param_importances = {k: 1.0 / n_params for k in non_single_dists}
+        #     param_importances.update({k: 0.0 for k in single_dists})
+        #     return {k: 0.0 for k in param_importances}
 
         target_trials = self._get_top_quantile_trials(study, trials, self._target_quantile, target)
         region_trials = (
@@ -257,16 +258,23 @@ class PedAnovaImportanceEvaluator(BaseImportanceEvaluator):
             if self._region_quantile == 1.0
             else self._get_top_quantile_trials(study, trials, self._region_quantile, target)
         )
-        quantile = len(target_trials) / len(region_trials)
-        importance_sum = 0.0
-        param_importances = {}
-        for param_name, dist in non_single_dists.items():
-            param_importances[param_name] = quantile**2 * self._compute_pearson_divergence(
-                param_name, dist, top_trials=top_trials, all_trials=trials
-            )
-            importance_sum += param_importances[param_name]
-
-        param_importances.update({k: 0.0 for k in single_dists})
+        quantile = len(target_trials) / len(region_trials) # gamma' / gamma
+        param_importances: dict[str, float] = defaultdict(float)
+        for param_name in params:
+            regime_trials = _partition_by_regime(param_name, region_trials)
+            for dist, region_trials_regime in regime_trials.items():
+                all_region_trials_regime = set(region_trials_regime)
+                target_trials_regime = [t for t in target_trials if t in all_region_trials_regime]
+                target_regime_prob = len(target_trials_regime) / len(target_trials) # a_i
+                region_regime_prob = len(region_trials_regime) / len(region_trials) # b_i
+                if dist is not None and not dist.single():
+                    # between-regime divergence
+                    param_importances[param_name] += target_regime_prob ** 2 / region_regime_prob * self._compute_pearson_divergence(
+                        param_name, dist, top_trials=target_trials_regime, all_trials=all_region_trials_regime
+                    )
+                # inter-regime divergence
+                param_importances[param_name] += (target_regime_prob - region_regime_prob) ** 2 / region_regime_prob
+        param_importances = {k: v * quantile ** 2 for k, v in param_importances.items()}
         return _sort_dict_by_importance(param_importances)
 
 
