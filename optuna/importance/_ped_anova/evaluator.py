@@ -270,7 +270,7 @@ class PedAnovaImportanceEvaluator(BaseImportanceEvaluator):
                 if dist is not None and not dist.single():
                     # between-regime divergence
                     param_importances[param_name] += regime_prob_target ** 2 / regime_prob_region * self._compute_pearson_divergence(
-                        param_name, dist, top_trials=target_trials_regime, all_trials=all_region_trials_regime
+                        param_name, dist, top_trials=target_trials_regime, all_trials=region_trials_regime
                     )
                 # inter-regime divergence
                 param_importances[param_name] += (regime_prob_target - regime_prob_region) ** 2 / regime_prob_region
