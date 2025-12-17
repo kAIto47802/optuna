@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from collections.abc import Callable
 from typing import cast
-from collections import defaultdict
 
 import numpy as np
 
@@ -238,6 +238,8 @@ class PedAnovaImportanceEvaluator(BaseImportanceEvaluator):
         assert params is not None
 
         trials = _get_filtered_trials(study, target=target)
+        print("total trials: ", len(trials))
+        # assert False
         # The following should be tested at _get_filtered_trials.
         assert target is not None or max([len(t.values) for t in trials], default=1) == 1
         if len(trials) <= self._min_n_top_trials:
@@ -249,32 +251,63 @@ class PedAnovaImportanceEvaluator(BaseImportanceEvaluator):
             if self._region_quantile == 1.0
             else self._get_top_quantile_trials(study, trials, self._region_quantile, target)
         )
-        quantile = len(target_trials) / len(region_trials) # gamma' / gamma
+        print("region_trials: ", len(region_trials))
+        print("target_trials: ", len(target_trials))
+        quantile = len(target_trials) / len(region_trials)  # gamma' / gamma
         param_importances: dict[str, float] = defaultdict(float)
+        print("params:", params)
         for param_name in params:
             regime_trials = _partition_by_regime(param_name, region_trials)
+            print(f"[[{param_name}]]" + "=" * 30)
+            print({k: [t._trial_id for t in v] for k, v in regime_trials.items()})
+            print({k: [t.value for t in v] for k, v in regime_trials.items()})
+            print(
+                {k: [t.params.get(param_name, None) for t in v] for k, v in regime_trials.items()}
+            )
+            print({k: len(v) for k, v in regime_trials.items()})
             for dist, region_trials_regime in regime_trials.items():
-                all_region_trials_regime = set(region_trials_regime)
-                target_trials_regime = [t for t in target_trials if t in all_region_trials_regime]
-                regime_prob_target = len(target_trials_regime) / len(target_trials) # a_i
-                regime_prob_region = len(region_trials_regime) / len(region_trials) # b_i
-                if dist is not None and not dist.single():
+                print(f"{dist}: {len(region_trials_regime)} trials" + "-" * 30)
+                all_region_trials_regime = set(t._trial_id for t in region_trials_regime)
+                target_trials_regime = [
+                    t for t in target_trials if t._trial_id in all_region_trials_regime
+                ]
+                print(f"among them, {len(target_trials_regime)} are in target trials")
+                regime_prob_target = len(target_trials_regime) / len(target_trials)  # a_i
+                regime_prob_region = len(region_trials_regime) / len(region_trials)  # b_i
+                print(f"regime_prob_target: {regime_prob_target}")
+                print(f"regime_prob_region: {regime_prob_region}")
+                if dist is not None and not dist.single() and len(target_trials_regime):
                     # between-regime divergence
-                    param_importances[param_name] += regime_prob_target ** 2 / regime_prob_region * self._compute_pearson_divergence(
-                        param_name, dist, top_trials=target_trials_regime, all_trials=region_trials_regime
+                    param_importances[param_name] += (
+                        tmp := regime_prob_target**2
+                        / regime_prob_region
+                        * self._compute_pearson_divergence(
+                            param_name,
+                            dist,
+                            target_trials=target_trials_regime,
+                            region_trials=region_trials_regime,
+                        )
                     )
+                    print(f"contribution from within-regime pearson divergence: {tmp}")
+                else:
+                    print("contribution from within-regime pearson divergence: (0.0)")
                 # inter-regime divergence
-                param_importances[param_name] += (regime_prob_target - regime_prob_region) ** 2 / regime_prob_region
-        param_importances = {k: v * quantile ** 2 for k, v in param_importances.items()}
+                param_importances[param_name] += (
+                    tmp2 := (regime_prob_target - regime_prob_region) ** 2 / regime_prob_region
+                )
+                print(f"contribution from inter-regime divergence: {tmp2}")
+        param_importances = {k: v * quantile**2 for k, v in param_importances.items()}
         return _sort_dict_by_importance(param_importances)
 
 
-def _partition_by_regime(param_name: str, trials: list[FrozenTrial]) -> dict[BaseDistribution | None, list[FrozenTrial]]:
+def _partition_by_regime(
+    param_name: str, trials: list[FrozenTrial]
+) -> dict[BaseDistribution | None, list[FrozenTrial]]:
     # None for the inactive regime
     regime_trials: dict[BaseDistribution | None, list[FrozenTrial]] = defaultdict(list)
     active_dist: BaseDistribution | None = None
     for trial in trials:
-        if param_name not in trial.params: # inactive trial
+        if param_name not in trial.params:  # inactive trial
             regime_trials[None].append(trial)
         else:
             if active_dist is None:
@@ -303,11 +336,17 @@ def _get_filtered_trials(
     ]
 
 
-def _get_distributions(study: Study, params: list[str] | None) -> list[dict[str, BaseDistribution]]:
+def _get_distributions(
+    study: Study, params: list[str] | None
+) -> list[dict[str, BaseDistribution]]:
     if params is not None:
         raise NotImplementedError()
     trials = study.get_trials(deepcopy=False)
-    return [t.distributions for t in trials if t.state in (
+    return [
+        t.distributions
+        for t in trials
+        if t.state
+        in (
             TrialState.COMPLETE,
             TrialState.WAITING,
             TrialState.RUNNING,
