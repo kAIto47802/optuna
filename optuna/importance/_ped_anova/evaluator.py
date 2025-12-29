@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from collections import defaultdict
 from collections.abc import Callable
-from typing import cast
 
 import numpy as np
 
@@ -10,20 +8,15 @@ from optuna._deprecated import _DEPRECATION_WARNING_TEMPLATE
 from optuna._experimental import experimental_class
 from optuna._warnings import optuna_warn
 from optuna.distributions import BaseDistribution
+from optuna.importance._base import _get_distributions
+from optuna.importance._base import _get_filtered_trials
 from optuna.importance._base import _sort_dict_by_importance
 from optuna.importance._base import BaseImportanceEvaluator
 from optuna.importance._ped_anova.scott_parzen_estimator import _build_parzen_estimator
-from optuna.logging import get_logger
 from optuna.study import Study
 from optuna.study import StudyDirection
 from optuna.trial import FrozenTrial
-from optuna.trial import TrialState
 
-
-_logger = get_logger(__name__)
-
-
-np.set_printoptions(precision=3)
 
 class _QuantileFilter:
     def __init__(
@@ -33,7 +26,7 @@ class _QuantileFilter:
         min_n_top_trials: int,
         target: Callable[[FrozenTrial], float] | None,
     ) -> None:
-        assert 0 < quantile <= 1, "quantile must be in [0, 1]."
+        assert 0 < quantile <= 1, "quantile must be in (0, 1]."
         assert min_n_top_trials > 0, "min_n_top_trials must be positive."
 
         self._quantile = quantile
@@ -112,7 +105,7 @@ class PedAnovaImportanceEvaluator(BaseImportanceEvaluator):
 
             .. warning::
                 Deprecated in v4.7.0. This feature will be removed in the future. The removal of
-                this feature is currently scheduled for v0.6.0, but this schedule is subject to
+                this feature is currently scheduled for v5.0.0, but this schedule is subject to
                 change. `baseline_quantile` is currently ignored. Use `target_quantile` instead.
                 See https://github.com/optuna/optuna/releases/tag/v4.7.0.
 
@@ -158,7 +151,7 @@ class PedAnovaImportanceEvaluator(BaseImportanceEvaluator):
         )
         if baseline_quantile is not None:
             msg = _DEPRECATION_WARNING_TEMPLATE.format(
-                name="`baseline_quantile`", d_ver="4.7.0", r_ver="6.0.0"
+                name="`baseline_quantile`", d_ver="4.7.0", r_ver="5.0.0"
             )
             optuna_warn(
                 f"{msg} `baseline_quantile` is currently ignored. Use `target_quantile` instead.",
@@ -233,19 +226,23 @@ class PedAnovaImportanceEvaluator(BaseImportanceEvaluator):
         *,
         target: Callable[[FrozenTrial], float] | None = None,
     ) -> dict[str, float]:
-        all_dists = _get_distributions(study, params=params)
+        dists = _get_distributions(study, params=params)
         if params is None:
-            params = list({k for d in all_dists for k in d})
+            params = list(dists.keys())
 
         assert params is not None
+        # PED-ANOVA does not support parameter distributions with a single value,
+        # because the importance of such params become zero.
+        non_single_dists = {name: dist for name, dist in dists.items() if not dist.single()}
+        single_dists = {name: dist for name, dist in dists.items() if dist.single()}
+        if len(non_single_dists) == 0:
+            return {}
 
-        trials = _get_filtered_trials(study, target=target)
-        print("total trials: ", len(trials))
-        # assert False
+        trials = _get_filtered_trials(study, params=params, target=target)
         # The following should be tested at _get_filtered_trials.
         assert target is not None or max([len(t.values) for t in trials], default=1) == 1
         if len(trials) <= self._min_n_top_trials:
-            return {k: 0.0 for k in params}
+            return {k: 0.0 for k in dists}
 
         target_trials = self._get_top_quantile_trials(study, trials, self._target_quantile, target)
         region_trials = (
@@ -253,100 +250,17 @@ class PedAnovaImportanceEvaluator(BaseImportanceEvaluator):
             if self._region_quantile == 1.0
             else self._get_top_quantile_trials(study, trials, self._region_quantile, target)
         )
-        print("region_trials: ", len(region_trials))
-        print("target_trials: ", len(target_trials))
-        quantile = len(target_trials) / len(region_trials)  # gamma' / gamma
-        param_importances: dict[str, float] = defaultdict(float)
-        print("params:", params)
-        regime_trials_map = _partition_by_regime(region_trials, target_trials)
-        for param_name in params:
-            print(f"===[[{param_name}]]" + "=" * 30)
-            for dists, region_trials_regime, target_trials_regime in regime_trials_map:
-                dist = dists.get(param_name)
-                print(f"---{dist}: {len(region_trials_regime)} trials" + "-" * 30)
-                print(f">> target trials: {len(target_trials_regime)}")
-                regime_prob_target = len(target_trials_regime) / len(target_trials)  # a_i
-                regime_prob_region = len(region_trials_regime) / len(region_trials)  # b_i
-                print(f"regime_prob_target: {regime_prob_target}")
-                print(f"regime_prob_region: {regime_prob_region}")
+        if len(target_trials) == len(region_trials):
+            optuna_warn(
+                "Target and region quantiles select the same set of trials. "
+                "Parameter importances will be equal."
+            )
+        quantile = len(target_trials) / len(region_trials)
+        param_importances = {}
+        for param_name, dist in non_single_dists.items():
+            param_importances[param_name] = quantile**2 * self._compute_pearson_divergence(
+                param_name, dist, target_trials=target_trials, region_trials=region_trials
+            )
 
-                print("target_trials_regime:")
-                print("> value: ", np.array([t.value for t in target_trials_regime]))
-                print("> param: ", np.array([t.params.get(param_name) for t in target_trials_regime]))
-                print("region_trials_regime:")
-                print("> value: ", np.array([t.value for t in region_trials_regime]))
-                print("> param: ", np.array([t.params.get(param_name) for t in region_trials_regime]))
-                if dist is not None and not dist.single() and len(target_trials_regime):
-                    # between-regime divergence
-                    param_importances[param_name] += (
-                        tmp := regime_prob_target**2
-                        / regime_prob_region
-                        * self._compute_pearson_divergence(
-                            param_name,
-                            dist,
-                            target_trials=target_trials_regime,
-                            region_trials=region_trials_regime,
-                        )
-                    )
-                    print(f"contribution from within-regime pearson divergence: {tmp}")
-                else:
-                    print("contribution from within-regime pearson divergence: (0.0)")
-                # inter-regime divergence
-                param_importances[param_name] += (
-                    tmp2 := (regime_prob_target - regime_prob_region) ** 2 / regime_prob_region
-                )
-                print(f"contribution from inter-regime divergence: {tmp2}")
-        param_importances = {k: v * quantile**2 for k, v in param_importances.items()}
+        param_importances.update({k: 0.0 for k in single_dists})
         return _sort_dict_by_importance(param_importances)
-
-
-def _partition_by_regime(
-    region_trials: list[FrozenTrial], target_trials: list[FrozenTrial]
-) -> list[tuple[dict[str, BaseDistribution], list[FrozenTrial], list[FrozenTrial]]]:
-    #!!! Dynamic range is not supported
-    regime_id_trial_map: dict[int, tuple[list[FrozenTrial], list[FrozenTrial]]] = defaultdict(lambda: ([], []))
-    regimes: list[dict[str, BaseDistribution]] = []
-    all_target_trial_ids = set([t._trial_id for t in target_trials])
-    for trial in region_trials:
-        regime_id = next((i for i, r in enumerate(regimes) if r == trial.distributions), None)
-        if regime_id is None:
-            regime_id = len(regimes)
-            regimes.append(trial.distributions)
-        regime_id_trial_map[regime_id][0].append(trial)
-        if trial._trial_id in all_target_trial_ids:
-            regime_id_trial_map[regime_id][1].append(trial)
-    return [
-        (regimes[regime_id], region_trials_regime, target_trials_regime)
-        for regime_id, (region_trials_regime, target_trials_regime) in regime_id_trial_map.items()
-    ]
-
-
-def _get_filtered_trials(
-    study: Study, target: Callable[[FrozenTrial], float] | None
-) -> list[FrozenTrial]:
-    trials = study.get_trials(deepcopy=False, states=(TrialState.COMPLETE,))
-    return [
-        trial
-        for trial in trials
-        if np.isfinite(
-            target(trial) if target is not None else cast("float", trial.value)
-        )  # TC006
-    ]
-
-
-def _get_distributions(
-    study: Study, params: list[str] | None
-) -> list[dict[str, BaseDistribution]]:
-    if params is not None:
-        raise NotImplementedError()
-    trials = study.get_trials(deepcopy=False)
-    return [
-        t.distributions
-        for t in trials
-        if t.state
-        in (
-            TrialState.COMPLETE,
-            TrialState.WAITING,
-            TrialState.RUNNING,
-        )
-    ]

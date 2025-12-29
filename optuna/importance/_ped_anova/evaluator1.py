@@ -1,10 +1,8 @@
-
 from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Callable
 from typing import cast
-
 
 import numpy as np
 
@@ -24,6 +22,8 @@ from optuna.trial import TrialState
 
 _logger = get_logger(__name__)
 
+
+np.set_printoptions(precision=3)
 
 class _QuantileFilter:
     def __init__(
@@ -233,9 +233,9 @@ class PedAnovaImportanceEvaluator(BaseImportanceEvaluator):
         *,
         target: Callable[[FrozenTrial], float] | None = None,
     ) -> dict[str, float]:
-        dists = _get_distributions(study, params=params)
+        all_dists = _get_distributions(study, params=params)
         if params is None:
-            params = list({k for d in dists for k in d})
+            params = list({k for d in all_dists for k in d})
 
         assert params is not None
 
@@ -258,26 +258,24 @@ class PedAnovaImportanceEvaluator(BaseImportanceEvaluator):
         quantile = len(target_trials) / len(region_trials)  # gamma' / gamma
         param_importances: dict[str, float] = defaultdict(float)
         print("params:", params)
+        regime_trials_map = _partition_by_regime(region_trials, target_trials)
         for param_name in params:
-            regime_trials = _partition_by_regime(param_name, region_trials)
             print(f"===[[{param_name}]]" + "=" * 30)
-            # print({k: [t._trial_id for t in v] for k, v in regime_trials.items()})
-            # print({k: [t.value for t in v] for k, v in regime_trials.items()})
-            # print(
-            #     {k: [t.params.get(param_name, None) for t in v] for k, v in regime_trials.items()}
-            # )
-            print({k: len(v) for k, v in regime_trials.items()})
-            for dist, region_trials_regime in regime_trials.items():
+            for dists, region_trials_regime, target_trials_regime in regime_trials_map:
+                dist = dists.get(param_name)
                 print(f"---{dist}: {len(region_trials_regime)} trials" + "-" * 30)
-                all_region_trials_regime = set(t._trial_id for t in region_trials_regime)
-                target_trials_regime = [
-                    t for t in target_trials if t._trial_id in all_region_trials_regime
-                ]
-                print(">> target trials: ", len(target_trials_regime))
+                print(f">> target trials: {len(target_trials_regime)}")
                 regime_prob_target = len(target_trials_regime) / len(target_trials)  # a_i
                 regime_prob_region = len(region_trials_regime) / len(region_trials)  # b_i
                 print(f"regime_prob_target: {regime_prob_target}")
                 print(f"regime_prob_region: {regime_prob_region}")
+
+                print("target_trials_regime:")
+                print("> value: ", np.array([t.value for t in target_trials_regime]))
+                print("> param: ", np.array([t.params.get(param_name) for t in target_trials_regime]))
+                print("region_trials_regime:")
+                print("> value: ", np.array([t.value for t in region_trials_regime]))
+                print("> param: ", np.array([t.params.get(param_name) for t in region_trials_regime]))
                 if dist is not None and not dist.single() and len(target_trials_regime):
                     # between-regime divergence
                     param_importances[param_name] += (
@@ -303,26 +301,24 @@ class PedAnovaImportanceEvaluator(BaseImportanceEvaluator):
 
 
 def _partition_by_regime(
-    param_name: str, trials: list[FrozenTrial]
-) -> dict[BaseDistribution | None, list[FrozenTrial]]:
-    # None for the inactive regime
-    regime_trials: dict[BaseDistribution | None, list[FrozenTrial]] = defaultdict(list)
-    active_dist: BaseDistribution | None = None
-    for trial in trials:
-        if param_name not in trial.params:  # inactive trial
-            regime_trials[None].append(trial)
-        else:
-            if active_dist is None:
-                active_dist = trial.distributions[param_name]
-            elif active_dist != trial.distributions[param_name]:
-                raise NotImplementedError(
-                    "conditional PED-ANOVA currently does not support changing distributions of a parameter "
-                    f"`{param_name}` across trials."
-                )
-
-            regime_trials[active_dist].append(trial)
-
-    return regime_trials
+    region_trials: list[FrozenTrial], target_trials: list[FrozenTrial]
+) -> list[tuple[dict[str, BaseDistribution], list[FrozenTrial], list[FrozenTrial]]]:
+    #!!! Dynamic range is not supported
+    regime_id_trial_map: dict[int, tuple[list[FrozenTrial], list[FrozenTrial]]] = defaultdict(lambda: ([], []))
+    regimes: list[dict[str, BaseDistribution]] = []
+    all_target_trial_ids = set([t._trial_id for t in target_trials])
+    for trial in region_trials:
+        regime_id = next((i for i, r in enumerate(regimes) if r == trial.distributions), None)
+        if regime_id is None:
+            regime_id = len(regimes)
+            regimes.append(trial.distributions)
+        regime_id_trial_map[regime_id][0].append(trial)
+        if trial._trial_id in all_target_trial_ids:
+            regime_id_trial_map[regime_id][1].append(trial)
+    return [
+        (regimes[regime_id], region_trials_regime, target_trials_regime)
+        for regime_id, (region_trials_regime, target_trials_regime) in regime_id_trial_map.items()
+    ]
 
 
 def _get_filtered_trials(

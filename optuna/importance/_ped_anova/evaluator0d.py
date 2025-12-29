@@ -281,9 +281,7 @@ class PedAnovaImportanceEvaluator(BaseImportanceEvaluator):
                 if dist is not None and not dist.single() and len(target_trials_regime):
                     # between-regime divergence
                     param_importances[param_name] += (
-                        tmp := regime_prob_target**2
-                        / regime_prob_region
-                        * self._compute_pearson_divergence(
+                        tmp := self._compute_pearson_divergence(
                             param_name,
                             dist,
                             target_trials=target_trials_regime,
@@ -292,12 +290,13 @@ class PedAnovaImportanceEvaluator(BaseImportanceEvaluator):
                     )
                     print(f"contribution from within-regime pearson divergence: {tmp}")
                 else:
+                    param_importances[param_name] += 0.0
                     print("contribution from within-regime pearson divergence: (0.0)")
                 # inter-regime divergence
-                param_importances[param_name] += (
-                    tmp2 := (regime_prob_target - regime_prob_region) ** 2 / regime_prob_region
-                )
-                print(f"contribution from inter-regime divergence: {tmp2}")
+                # param_importances[param_name] += (
+                #     tmp2 := (regime_prob_target - regime_prob_region) ** 2 / regime_prob_region
+                # )
+                # print(f"contribution from inter-regime divergence: {tmp2}")
         param_importances = {k: v * quantile**2 for k, v in param_importances.items()}
         return _sort_dict_by_importance(param_importances)
 
