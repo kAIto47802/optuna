@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from optuna._gp.scipy_blas_thread_patch import single_blas_thread_if_scipy_v1_15_or_newer
+from optuna._gp.thread_debug import measure
 from optuna._warnings import optuna_warn
 from optuna.logging import get_logger
 
@@ -70,19 +71,20 @@ def _solve_cholesky(L: torch.Tensor, B: torch.Tensor, *, left: bool = True) -> t
     NOTE(nabenabe): Don't use np.linalg.inv because it is too slow und unstable.
     cf. https://github.com/optuna/optuna/issues/6230
     """
-    if left:
-        # L @ L.T @ X = B --> L.T @ X = inv(L) @ B --> X = inv(L.T) @ inv(L) @ B
-        return torch.linalg.solve_triangular(
-            L.T, torch.linalg.solve_triangular(L, B, upper=False), upper=True
-        )
-    else:
-        # X @ L @ L.T = B --> X @ L = B @ inv(L.T) --> X = B @ inv(L.T) @ inv(L)
-        return torch.linalg.solve_triangular(
-            L,
-            torch.linalg.solve_triangular(L.T, B, upper=True, left=False),
-            upper=False,
-            left=False,
-        )
+    with measure("gp._solve_cholesky"):
+        if left:
+            # L @ L.T @ X = B --> L.T @ X = inv(L) @ B --> X = inv(L.T) @ inv(L) @ B
+            return torch.linalg.solve_triangular(
+                L.T, torch.linalg.solve_triangular(L, B, upper=False), upper=True
+            )
+        else:
+            # X @ L @ L.T = B --> X @ L = B @ inv(L.T) --> X = B @ inv(L.T) @ inv(L)
+            return torch.linalg.solve_triangular(
+                L,
+                torch.linalg.solve_triangular(L.T, B, upper=True, left=False),
+                upper=False,
+                left=False,
+            )
 
 
 def _extend_cholesky(L11: torch.Tensor, K21: torch.Tensor, K22: torch.Tensor) -> torch.Tensor:
@@ -101,16 +103,17 @@ def _extend_cholesky(L11: torch.Tensor, K21: torch.Tensor, K22: torch.Tensor) ->
     Since inv(K11) = inv(L11 @ L11.T) = inv(L11.T) @ inv(L11),
     K21 @ inv(K11) @ K21.T = K21 @ inv(L11.T) @ inv(L11) @ K21.T = L21 @ L21.T.
     """
-    n1 = L11.shape[-1]
-    n2 = K22.shape[-1]
-    batch_shape = L11.shape[:-2]
-    L = torch.zeros(batch_shape + (n1 + n2, n1 + n2), dtype=torch.float64)
-    L21_T = torch.linalg.solve_triangular(L11, K21.transpose(-1, -2), upper=False)
-    L21 = L21_T.transpose(-1, -2)
-    L[..., :n1, :n1] = L11
-    L[..., n1:, n1:] = torch.linalg.cholesky(K22 - L21 @ L21_T)
-    L[..., n1:, :n1] = L21
-    return L
+    with measure("gp._extend_cholesky"):
+        n1 = L11.shape[-1]
+        n2 = K22.shape[-1]
+        batch_shape = L11.shape[:-2]
+        L = torch.zeros(batch_shape + (n1 + n2, n1 + n2), dtype=torch.float64)
+        L21_T = torch.linalg.solve_triangular(L11, K21.transpose(-1, -2), upper=False)
+        L21 = L21_T.transpose(-1, -2)
+        L[..., :n1, :n1] = L11
+        L[..., n1:, n1:] = torch.linalg.cholesky(K22 - L21 @ L21_T)
+        L[..., n1:, :n1] = L21
+        return L
 
 
 class Matern52Kernel(torch.autograd.Function):
@@ -176,17 +179,19 @@ class GPRegressor:
         return 1.0 / np.sqrt(self.inverse_squared_lengthscales.detach().cpu().numpy())
 
     def _cache_matrix(self) -> None:
-        assert self._cov_Y_Y_chol is None and self._cov_Y_Y_inv_Y is None, (
-            "Cannot call cache_matrix more than once."
-        )
-        self.inverse_squared_lengthscales = self.inverse_squared_lengthscales.detach()
-        self.kernel_scale = self.kernel_scale.detach()
-        self.noise_var = self.noise_var.detach()
-        with torch.no_grad():
-            cov_Y_Y = self.kernel()
-        cov_Y_Y.diagonal().add_(self.noise_var)
-        self._cov_Y_Y_chol = torch.linalg.cholesky(cov_Y_Y)
-        self._cov_Y_Y_inv_Y = _solve_cholesky(self._cov_Y_Y_chol, self._y_train).squeeze(-1)
+        with measure("gp.GPRegressor._cache_matrix"):
+            assert self._cov_Y_Y_chol is None and self._cov_Y_Y_inv_Y is None, (
+                "Cannot call cache_matrix more than once."
+            )
+            self.inverse_squared_lengthscales = self.inverse_squared_lengthscales.detach()
+            self.kernel_scale = self.kernel_scale.detach()
+            self.noise_var = self.noise_var.detach()
+            with torch.no_grad():
+                cov_Y_Y = self.kernel()
+            cov_Y_Y.diagonal().add_(self.noise_var)
+            with measure("gp.GPRegressor._cache_matrix.cholesky"):
+                self._cov_Y_Y_chol = torch.linalg.cholesky(cov_Y_Y)
+            self._cov_Y_Y_inv_Y = _solve_cholesky(self._cov_Y_Y_chol, self._y_train).squeeze(-1)
 
     def append_running_data(self, X_running: torch.Tensor, y_running: torch.Tensor) -> None:
         assert self._cov_Y_Y_chol is not None and self._cov_Y_Y_inv_Y is not None, (
@@ -218,20 +223,23 @@ class GPRegressor:
         categorical, sqd(x1, x2)[i] = int(x1[i] != x2[i]).
         Note that the distance for categorical parameters is the Hamming distance.
         """
-        if X1 is None:
-            assert X2 is None
-            sqd = self._squared_X_diff
-        else:
-            if X2 is None:
-                X2 = self._X_train
+        with measure("gp.GPRegressor.kernel"):
+            if X1 is None:
+                assert X2 is None
+                sqd = self._squared_X_diff
+            else:
+                if X2 is None:
+                    X2 = self._X_train
 
-            sqd = (X1 - X2 if X1.ndim == 1 else X1.unsqueeze(-2) - X2.unsqueeze(-3)).square_()
-            if self._is_categorical.any():
-                sqd[..., self._is_categorical] = (sqd[..., self._is_categorical] > 0.0).type(
-                    torch.float64
-                )
-        sqdist = sqd.matmul(self.inverse_squared_lengthscales)
-        return Matern52Kernel.apply(sqdist) * self.kernel_scale  # type: ignore
+                sqd = (
+                    X1 - X2 if X1.ndim == 1 else X1.unsqueeze(-2) - X2.unsqueeze(-3)
+                ).square_()
+                if self._is_categorical.any():
+                    sqd[..., self._is_categorical] = (sqd[..., self._is_categorical] > 0.0).type(
+                        torch.float64
+                    )
+            sqdist = sqd.matmul(self.inverse_squared_lengthscales)
+            return Matern52Kernel.apply(sqdist) * self.kernel_scale  # type: ignore
 
     def posterior(self, x: torch.Tensor, joint: bool = False) -> tuple[torch.Tensor, torch.Tensor]:
         """
@@ -245,25 +253,28 @@ class GPRegressor:
 
         Please note that we clamp the variance to avoid negative values due to numerical errors.
         """
-        assert self._cov_Y_Y_chol is not None and self._cov_Y_Y_inv_Y is not None, (
-            "Call cache_matrix before calling posterior."
-        )
-        is_single_point = x.ndim == 1
-        x_ = x if not is_single_point else x.unsqueeze(0)
-        mean = torch.linalg.vecdot(cov_fx_fX := self.kernel(x_, self._X_all), self._cov_Y_Y_inv_Y)
-        # K @ inv(C) = V --> K = V @ C --> K = V @ L @ L.T
-        V = _solve_cholesky(self._cov_Y_Y_chol, cov_fx_fX, left=False)
-        if joint:
-            assert not is_single_point, "Call posterior with joint=False for a single point."
-            cov_fx_fx = self.kernel(x_, x_)
-            # NOTE(nabenabe): Indeed, var_ here is a covariance matrix.
-            var_ = cov_fx_fx - V.matmul(cov_fx_fX.transpose(-1, -2))
-            var_.diagonal(dim1=-2, dim2=-1).clamp_min_(0.0)
-        else:
-            cov_fx_fx = self.kernel_scale  # kernel(x, x) = kernel_scale
-            var_ = cov_fx_fx - torch.linalg.vecdot(cov_fx_fX, V)
-            var_.clamp_min_(0.0)
-        return (mean.squeeze(0), var_.squeeze(0)) if is_single_point else (mean, var_)
+        with measure("gp.GPRegressor.posterior"):
+            assert self._cov_Y_Y_chol is not None and self._cov_Y_Y_inv_Y is not None, (
+                "Call cache_matrix before calling posterior."
+            )
+            is_single_point = x.ndim == 1
+            x_ = x if not is_single_point else x.unsqueeze(0)
+            mean = torch.linalg.vecdot(
+                cov_fx_fX := self.kernel(x_, self._X_all), self._cov_Y_Y_inv_Y
+            )
+            # K @ inv(C) = V --> K = V @ C --> K = V @ L @ L.T
+            V = _solve_cholesky(self._cov_Y_Y_chol, cov_fx_fX, left=False)
+            if joint:
+                assert not is_single_point, "Call posterior with joint=False for a single point."
+                cov_fx_fx = self.kernel(x_, x_)
+                # NOTE(nabenabe): Indeed, var_ here is a covariance matrix.
+                var_ = cov_fx_fx - V.matmul(cov_fx_fX.transpose(-1, -2))
+                var_.diagonal(dim1=-2, dim2=-1).clamp_min_(0.0)
+            else:
+                cov_fx_fx = self.kernel_scale  # kernel(x, x) = kernel_scale
+                var_ = cov_fx_fx - torch.linalg.vecdot(cov_fx_fX, V)
+                var_.clamp_min_(0.0)
+            return (mean.squeeze(0), var_.squeeze(0)) if is_single_point else (mean, var_)
 
     def marginal_log_likelihood(self) -> torch.Tensor:  # Scalar
         """
@@ -291,17 +302,35 @@ class GPRegressor:
         2/3*N**3 flops, the overall cost for the former is 1/3*N**3+N**2+N flops and that for the
         latter is N**3+2*N**2-N flops.
         """
-        cov_Y_Y = self.kernel()
-        # NOTE(nabenabe): If we extend it to batch optimization, use diagonal(dim1=-2, dim2=-1).
-        cov_Y_Y.diagonal().add_(self.noise_var)
-        L = torch.linalg.cholesky(cov_Y_Y)
-        logdet_part = -L.diagonal().log().sum()
-        inv_L_y = torch.linalg.solve_triangular(L, self._y_train, upper=False).squeeze(-1)
-        quad_part = -0.5 * (inv_L_y @ inv_L_y)
-        # NOTE(nabe): Omitting the constant does not change the optimum.
-        return logdet_part + quad_part
+        with measure("gp.GPRegressor.marginal_log_likelihood"):
+            cov_Y_Y = self.kernel()
+            # NOTE(nabenabe): If we extend it to batch optimization, use diagonal(dim1=-2, dim2=-1).
+            cov_Y_Y.diagonal().add_(self.noise_var)
+            with measure("gp.GPRegressor.marginal_log_likelihood.cholesky"):
+                L = torch.linalg.cholesky(cov_Y_Y)
+            logdet_part = -L.diagonal().log().sum()
+            with measure("gp.GPRegressor.marginal_log_likelihood.solve_triangular"):
+                inv_L_y = torch.linalg.solve_triangular(L, self._y_train, upper=False).squeeze(-1)
+            quad_part = -0.5 * (inv_L_y @ inv_L_y)
+            # NOTE(nabe): Omitting the constant does not change the optimum.
+            return logdet_part + quad_part
 
     def _fit_kernel_params(
+        self,
+        log_prior: Callable[[GPRegressor], torch.Tensor],
+        minimum_noise: float,
+        deterministic_objective: bool,
+        gtol: float,
+    ) -> GPRegressor:
+        with measure("gp.GPRegressor._fit_kernel_params"):
+            return self._fit_kernel_params_impl(
+                log_prior=log_prior,
+                minimum_noise=minimum_noise,
+                deterministic_objective=deterministic_objective,
+                gtol=gtol,
+            )
+
+    def _fit_kernel_params_impl(
         self,
         log_prior: Callable[[GPRegressor], torch.Tensor],
         minimum_noise: float,
@@ -327,32 +356,35 @@ class GPRegressor:
         )
 
         def loss_func(raw_params: np.ndarray) -> tuple[float, np.ndarray]:
-            raw_params_tensor = torch.from_numpy(raw_params).requires_grad_(True)
-            with torch.enable_grad():
-                self.inverse_squared_lengthscales = torch.exp(raw_params_tensor[:n_params])
-                self.kernel_scale = torch.exp(raw_params_tensor[n_params])
-                self.noise_var = (
-                    torch.tensor(minimum_noise, dtype=torch.float64)
-                    if deterministic_objective
-                    else torch.exp(raw_params_tensor[n_params + 1]) + minimum_noise
-                )
-                loss = -self.marginal_log_likelihood() - log_prior(self)
-                loss.backward()  # type: ignore
-                # scipy.minimize requires all the gradients to be zero for termination.
-                raw_noise_var_grad = raw_params_tensor.grad[n_params + 1]  # type: ignore
-                assert not deterministic_objective or raw_noise_var_grad == 0
-            return loss.item(), raw_params_tensor.grad.detach().cpu().numpy()  # type: ignore
+            with measure("gp.GPRegressor._fit_kernel_params.loss_func"):
+                raw_params_tensor = torch.from_numpy(raw_params).requires_grad_(True)
+                with torch.enable_grad():
+                    self.inverse_squared_lengthscales = torch.exp(raw_params_tensor[:n_params])
+                    self.kernel_scale = torch.exp(raw_params_tensor[n_params])
+                    self.noise_var = (
+                        torch.tensor(minimum_noise, dtype=torch.float64)
+                        if deterministic_objective
+                        else torch.exp(raw_params_tensor[n_params + 1]) + minimum_noise
+                    )
+                    loss = -self.marginal_log_likelihood() - log_prior(self)
+                    with measure("gp.GPRegressor._fit_kernel_params.loss_backward"):
+                        loss.backward()  # type: ignore
+                    # scipy.minimize requires all the gradients to be zero for termination.
+                    raw_noise_var_grad = raw_params_tensor.grad[n_params + 1]  # type: ignore
+                    assert not deterministic_objective or raw_noise_var_grad == 0
+                return loss.item(), raw_params_tensor.grad.detach().cpu().numpy()  # type: ignore
 
         with single_blas_thread_if_scipy_v1_15_or_newer():
             # jac=True means loss_func returns the gradient for gradient descent.
-            res = scipy.optimize.minimize(
-                # Too small `gtol` causes instability in loss_func optimization.
-                loss_func,
-                initial_raw_params,
-                jac=True,
-                method="l-bfgs-b",
-                options={"gtol": gtol},
-            )
+            with measure("gp.GPRegressor._fit_kernel_params.scipy_minimize"):
+                res = scipy.optimize.minimize(
+                    # Too small `gtol` causes instability in loss_func optimization.
+                    loss_func,
+                    initial_raw_params,
+                    jac=True,
+                    method="l-bfgs-b",
+                    options={"gtol": gtol},
+                )
         if not res.success:
             raise RuntimeError(f"Optimization failed: {res.message}")
 
@@ -369,6 +401,29 @@ class GPRegressor:
 
 
 def fit_kernel_params(
+    X: np.ndarray,
+    Y: np.ndarray,
+    is_categorical: np.ndarray,
+    log_prior: Callable[[GPRegressor], torch.Tensor],
+    minimum_noise: float,
+    deterministic_objective: bool,
+    gpr_cache: GPRegressor | None = None,
+    gtol: float = 1e-2,
+) -> GPRegressor:
+    with measure("gp.fit_kernel_params"):
+        return _fit_kernel_params_impl(
+            X=X,
+            Y=Y,
+            is_categorical=is_categorical,
+            log_prior=log_prior,
+            minimum_noise=minimum_noise,
+            deterministic_objective=deterministic_objective,
+            gpr_cache=gpr_cache,
+            gtol=gtol,
+        )
+
+
+def _fit_kernel_params_impl(
     X: np.ndarray,
     Y: np.ndarray,
     is_categorical: np.ndarray,

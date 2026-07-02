@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from optuna._gp.scipy_blas_thread_patch import single_blas_thread_if_scipy_v1_15_or_newer
+from optuna._gp.thread_debug import measure
 from optuna.logging import get_logger
 
 
@@ -49,6 +50,25 @@ def _gradient_ascent_batched(
     speeds up the convergence.
     As the domain of `x` is [0, 1], that of `z` becomes [0, 1/l].
     """
+    with measure("optim_mixed._gradient_ascent_batched"):
+        return _gradient_ascent_batched_impl(
+            acqf=acqf,
+            initial_params_batched=initial_params_batched,
+            initial_fvals=initial_fvals,
+            continuous_indices=continuous_indices,
+            lengthscales=lengthscales,
+            tol=tol,
+        )
+
+
+def _gradient_ascent_batched_impl(
+    acqf: BaseAcquisitionFunc,
+    initial_params_batched: np.ndarray,
+    initial_fvals: np.ndarray,
+    continuous_indices: np.ndarray,
+    lengthscales: np.ndarray,
+    tol: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     assert initial_params_batched.ndim == 2
     if len(continuous_indices) == 0:
         return initial_params_batched, initial_fvals, np.zeros(len(initial_fvals), dtype=bool)
@@ -56,29 +76,32 @@ def _gradient_ascent_batched(
     def negative_acqf_with_grad(
         scaled_x: np.ndarray, fixed_params: list[np.ndarray]
     ) -> tuple[np.ndarray, np.ndarray]:
-        next_params = np.array(fixed_params)  # (B, dim)
-        # Scale back to the original domain, i.e. [0, 1], from [0, 1/s].
-        assert scaled_x.ndim == 2 and next_params.ndim == 2
-        next_params[:, continuous_indices] = scaled_x * lengthscales
-        # NOTE(Kaichi-Irie): If fvals.numel() > 1, backward() cannot be computed, so we sum up.
-        x_tensor = torch.from_numpy(next_params).requires_grad_(True)
-        neg_fvals = -acqf.eval_acqf(x_tensor)
-        neg_fvals.sum().backward()  # type: ignore[no-untyped-call]
-        grads = x_tensor.grad.detach().numpy()  # type: ignore[union-attr]
-        neg_fvals_ = np.atleast_1d(neg_fvals.detach().numpy())
-        # Flip sign because scipy minimizes functions.
-        # Let the scaled acqf be g(x) and the acqf be f(sx), then dg/dx = df/dx * s.
-        return neg_fvals_, grads[:, continuous_indices] * lengthscales
+        with measure("optim_mixed._gradient_ascent_batched.negative_acqf_with_grad"):
+            next_params = np.array(fixed_params)  # (B, dim)
+            # Scale back to the original domain, i.e. [0, 1], from [0, 1/s].
+            assert scaled_x.ndim == 2 and next_params.ndim == 2
+            next_params[:, continuous_indices] = scaled_x * lengthscales
+            # NOTE(Kaichi-Irie): If fvals.numel() > 1, backward() cannot be computed, so we sum up.
+            x_tensor = torch.from_numpy(next_params).requires_grad_(True)
+            neg_fvals = -acqf.eval_acqf(x_tensor)
+            with measure("optim_mixed._gradient_ascent_batched.negative_acqf_backward"):
+                neg_fvals.sum().backward()  # type: ignore[no-untyped-call]
+            grads = x_tensor.grad.detach().numpy()  # type: ignore[union-attr]
+            neg_fvals_ = np.atleast_1d(neg_fvals.detach().numpy())
+            # Flip sign because scipy minimizes functions.
+            # Let the scaled acqf be g(x) and the acqf be f(sx), then dg/dx = df/dx * s.
+            return neg_fvals_, grads[:, continuous_indices] * lengthscales
 
     with single_blas_thread_if_scipy_v1_15_or_newer():
-        scaled_cont_xs_opt, neg_fvals_opt, n_iterations = batched_lbfgsb.batched_lbfgsb(
-            func_and_grad=negative_acqf_with_grad,
-            x0_batched=initial_params_batched[:, continuous_indices] / lengthscales,
-            batched_args=([param for param in initial_params_batched.copy()],),
-            bounds=[(0, 1 / s) for s in lengthscales],
-            pgtol=math.sqrt(tol),
-            max_iters=200,
-        )
+        with measure("optim_mixed._gradient_ascent_batched.batched_lbfgsb"):
+            scaled_cont_xs_opt, neg_fvals_opt, n_iterations = batched_lbfgsb.batched_lbfgsb(
+                func_and_grad=negative_acqf_with_grad,
+                x0_batched=initial_params_batched[:, continuous_indices] / lengthscales,
+                batched_args=([param for param in initial_params_batched.copy()],),
+                bounds=[(0, 1 / s) for s in lengthscales],
+                pgtol=math.sqrt(tol),
+                max_iters=200,
+            )
 
     xs_opt = initial_params_batched.copy()
     xs_opt[:, continuous_indices] = scaled_cont_xs_opt * lengthscales
@@ -232,6 +255,13 @@ def _local_search_discrete_batched(
 def local_search_mixed_batched(
     acqf: BaseAcquisitionFunc, xs0: np.ndarray, *, tol: float = 1e-4, max_iter: int = 100
 ) -> tuple[np.ndarray, np.ndarray]:
+    with measure("optim_mixed.local_search_mixed_batched"):
+        return _local_search_mixed_batched_impl(acqf, xs0, tol=tol, max_iter=max_iter)
+
+
+def _local_search_mixed_batched_impl(
+    acqf: BaseAcquisitionFunc, xs0: np.ndarray, *, tol: float = 1e-4, max_iter: int = 100
+) -> tuple[np.ndarray, np.ndarray]:
     # This is a technique for speeding up optimization. We use an isotropic kernel, so scaling the
     # gradient will make the hessian better-conditioned.
     # NOTE: Ideally, separating lengthscales should be used for the constraint functions,
@@ -286,6 +316,26 @@ def optimize_acqf_mixed(
     tol: float = 1e-4,
     rng: np.random.RandomState | None = None,
 ) -> tuple[np.ndarray, float]:
+    with measure("optim_mixed.optimize_acqf_mixed"):
+        return _optimize_acqf_mixed_impl(
+            acqf=acqf,
+            warmstart_normalized_params_array=warmstart_normalized_params_array,
+            n_preliminary_samples=n_preliminary_samples,
+            n_local_search=n_local_search,
+            tol=tol,
+            rng=rng,
+        )
+
+
+def _optimize_acqf_mixed_impl(
+    acqf: BaseAcquisitionFunc,
+    *,
+    warmstart_normalized_params_array: np.ndarray | None = None,
+    n_preliminary_samples: int = 2048,
+    n_local_search: int = 10,
+    tol: float = 1e-4,
+    rng: np.random.RandomState | None = None,
+) -> tuple[np.ndarray, float]:
     rng = rng or np.random.RandomState()
 
     if warmstart_normalized_params_array is None:
@@ -298,7 +348,8 @@ def optimize_acqf_mixed(
     sampled_xs = acqf.search_space.sample_normalized_params(n_preliminary_samples, rng=rng)
 
     # Evaluate all values at initial samples
-    f_vals = acqf.eval_acqf_no_grad(sampled_xs)
+    with measure("optim_mixed.optimize_acqf_mixed.eval_initial_samples"):
+        f_vals = acqf.eval_acqf_no_grad(sampled_xs)
     assert isinstance(f_vals, np.ndarray)
 
     max_i = np.argmax(f_vals)

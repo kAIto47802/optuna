@@ -8,6 +8,7 @@ import numpy as np
 
 import optuna
 from optuna._experimental import warn_experimental_argument
+from optuna._gp.thread_debug import measure
 from optuna.samplers._base import _CONSTRAINTS_KEY
 from optuna.samplers._base import _INDEPENDENT_SAMPLING_WARNING_TEMPLATE
 from optuna.samplers._base import _process_constraints_after_trial
@@ -268,14 +269,15 @@ class GPSampler(BaseSampler):
         # However, we do not make any effort to keep backward compatibility between versions.
         # Particularly, we may remove this function in future refactoring.
         assert best_params is None or len(best_params.shape) == 2
-        normalized_params, _acqf_val = optim_mixed.optimize_acqf_mixed(
-            acqf,
-            warmstart_normalized_params_array=best_params,
-            n_preliminary_samples=self._n_preliminary_samples,
-            n_local_search=self._n_local_search,
-            tol=self._tol,
-            rng=self._rng.rng,
-        )
+        with measure("sampler.GPSampler._optimize_acqf"):
+            normalized_params, _acqf_val = optim_mixed.optimize_acqf_mixed(
+                acqf,
+                warmstart_normalized_params_array=best_params,
+                n_preliminary_samples=self._n_preliminary_samples,
+                n_local_search=self._n_local_search,
+                tol=self._tol,
+                rng=self._rng.rng,
+            )
         return normalized_params
 
     def _get_constraints_acqf_args(
@@ -376,6 +378,21 @@ class GPSampler(BaseSampler):
         running_trials: list[FrozenTrial],
         search_space: dict[str, BaseDistribution],
     ) -> dict[str, Any]:
+        with measure("sampler.GPSampler._sample_relative_impl"):
+            return self._sample_relative_impl_debug(
+                study=study,
+                completed_trials=completed_trials,
+                running_trials=running_trials,
+                search_space=search_space,
+            )
+
+    def _sample_relative_impl_debug(
+        self,
+        study: Study,
+        completed_trials: list[FrozenTrial],
+        running_trials: list[FrozenTrial],
+        search_space: dict[str, BaseDistribution],
+    ) -> dict[str, Any]:
         internal_search_space = gp_search_space.SearchSpace(search_space)
         normalized_params = internal_search_space.get_normalized_params(completed_trials)
         normalized_params_of_running_trials = (
@@ -404,17 +421,18 @@ class GPSampler(BaseSampler):
         is_categorical = internal_search_space.is_categorical
         for i in range(n_objectives):
             cache = self._gprs_cache_list[i] if self._gprs_cache_list is not None else None
-            gprs_list.append(
-                gp.fit_kernel_params(
-                    X=normalized_params,
-                    Y=standardized_score_vals[:, i],
-                    is_categorical=is_categorical,
-                    log_prior=self._log_prior,
-                    minimum_noise=self._minimum_noise,
-                    gpr_cache=cache,
-                    deterministic_objective=self._deterministic,
+            with measure("sampler.GPSampler.fit_kernel_params"):
+                gprs_list.append(
+                    gp.fit_kernel_params(
+                        X=normalized_params,
+                        Y=standardized_score_vals[:, i],
+                        is_categorical=is_categorical,
+                        log_prior=self._log_prior,
+                        minimum_noise=self._minimum_noise,
+                        gpr_cache=cache,
+                        deterministic_objective=self._deterministic,
+                    )
                 )
-            )
         self._gprs_cache_list = gprs_list
 
         best_params: np.ndarray | None
