@@ -47,6 +47,9 @@ def limit_threads_in_optimization() -> Generator[None, None, None]:
     TODO: Watch SciPy and Torch updates for threading behavior changes.
     TODO: Benchmark optimization speed for new releases.
     """
+    if sys.platform == "darwin":
+        yield
+        return
     limit_openblas = Version(scipy.__version__) >= Version("1.15.0")
     old_openblas_val = os.environ.get("OPENBLAS_NUM_THREADS")
     if limit_openblas:
