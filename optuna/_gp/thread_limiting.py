@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 import os
 from typing import TYPE_CHECKING
+import sys
 
 from packaging.version import Version
 
