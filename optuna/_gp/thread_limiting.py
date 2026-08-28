@@ -30,12 +30,13 @@ def limit_threads_in_optimization() -> Generator[None, None, None]:
     same cores. The GP fit and the acquisition-function optimization issue many small NumPy/PyTorch
     calls, where this contention dominates the runtime rather than the actual computation.
 
-    Two knobs mitigate this:
+    On macOS, this context manager is a no-op because this oversubscription has not been observed
+    with Apple Accelerate's dynamic threading. On other platforms, two knobs mitigate this:
 
-    1. ``torch.set_num_threads(1)``: always applied. Limiting PyTorch's intra-op threads is
-       the dominant fix and helps regardless of the SciPy version (benchmarked ~6-12x
-       speedup on a 20-core Linux machine). It is safe and reversible. This addresses the
-       PyTorch/OpenMP side of the oversubscription.
+    1. ``torch.set_num_threads(1)``: applied regardless of the SciPy version. Limiting PyTorch's
+       intra-op threads is the dominant fix (benchmarked ~6-12x speedup on a 20-core Linux
+       machine). It is safe and reversible. This addresses the PyTorch/OpenMP side of the
+       oversubscription.
     2. ``OPENBLAS_NUM_THREADS=1``: applied only for SciPy v1.15+. SciPy v1.15.0 switched its
        optimizer backend so that OpenBLAS threads now contend with PyTorch's; on older SciPy
        this contention does not surface, so limiting OpenBLAS threads only helps on v1.15+.
